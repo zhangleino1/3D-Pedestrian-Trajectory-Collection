@@ -2,6 +2,7 @@ import os
 import pandas as pd
 import numpy as np
 from math import sqrt, atan2, degrees
+from datetime import datetime
 
 def calculate_horizontal_distance(pos1, pos2):
     """计算两个点之间的水平面距离（忽略z轴）"""
@@ -13,6 +14,10 @@ def calculate_horizontal_angle(pos1, pos2):
     delta_y = pos2[1] - pos1[1]
     return degrees(atan2(delta_y, delta_x))
 
+def format_timestamp(ms):
+    """将时间戳（毫秒）转换为 yyyy-mm-dd HH:mm:ss 格式"""
+    return datetime.fromtimestamp(ms / 1000.0).strftime('%Y-%m-%d %H:%M:%S')
+
 def process_csv(file_path):
     """处理单个CSV文件"""
     df = pd.read_csv(file_path)
@@ -23,6 +28,8 @@ def process_csv(file_path):
     total_horizontal_distance = 0.0
     total_time = 0.0
     last_angle = None
+    start_time_overall = df['timestamp'].iloc[0]
+    end_time_overall = df['timestamp'].iloc[-1]
 
     # 按照1秒时间窗口进行计算
     start_index = 0
@@ -49,6 +56,7 @@ def process_csv(file_path):
         # 计算平均速度
         time_diff = (window_df['timestamp'].iloc[-1] - window_df['timestamp'].iloc[0]) / 1000.0  # 秒
         horizontal_speed = horizontal_distance / time_diff if time_diff > 0 else 0.0
+        total_time += time_diff * 1000  # 转换为毫秒
 
         # 计算水平角度变化
         current_angle = calculate_horizontal_angle(window_df.iloc[0][['pos_x', 'pos_y']].values, 
@@ -59,11 +67,16 @@ def process_csv(file_path):
             angle_change = 0.0
         last_angle = current_angle
 
-        # 保存结果：窗口起始时间，起始位置，水平速度，水平距离，角度变化
+        # 保存结果：窗口起始时间，结束时间，起始位置，结束位置，水平速度，水平距离，角度变化
         results.append({
-            'timestamp': start_time,
+            'start_timestamp': start_time,
+            'end_timestamp': window_df['timestamp'].iloc[-1],
             'start_pos_x': window_df.iloc[0]['pos_x'],
             'start_pos_y': window_df.iloc[0]['pos_y'],
+            'end_pos_x': window_df.iloc[-1]['pos_x'],
+            'end_pos_y': window_df.iloc[-1]['pos_y'],
+            'start_datetime': format_timestamp(start_time),
+            'end_datetime': format_timestamp(window_df['timestamp'].iloc[-1]),
             'horizontal_speed': horizontal_speed,
             'horizontal_distance': horizontal_distance,
             'horizontal_angle_change': angle_change
@@ -72,7 +85,7 @@ def process_csv(file_path):
         # 移动到下一个时间窗口
         start_index += len(window_df)
 
-    avg_speed = total_horizontal_distance / total_time if total_time > 0 else 0.0
+    avg_speed = total_horizontal_distance / (total_time / 1000.0) if total_time > 0 else 0.0
 
     # 将结果保存到新的DataFrame
     results_df = pd.DataFrame(results)
@@ -84,7 +97,7 @@ def process_csv(file_path):
     # 将结果保存到新的CSV文件
     results_df.to_csv(new_csv_path, index=False)
 
-    return total_horizontal_distance, avg_speed
+    return total_horizontal_distance, total_time, avg_speed
 
 def process_directory(input_dir, output_dir):
     """遍历目录并处理所有CSV文件"""
@@ -99,10 +112,11 @@ def process_directory(input_dir, output_dir):
         for file in files:
             if file.endswith('.csv'):
                 file_path = os.path.join(root, file)
-                total_distance, avg_speed = process_csv(file_path)
+                total_distance, total_time, avg_speed = process_csv(file_path)
                 results.append({
                     'file': file,
                     'total_horizontal_distance': total_distance,
+                    'total_time_ms': total_time,
                     'avg_horizontal_speed': avg_speed
                 })
 
