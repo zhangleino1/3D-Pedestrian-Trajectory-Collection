@@ -109,6 +109,17 @@ def calculate_heading(sensor_data):
 
     return heading_degrees
 
+def quaternion_to_yaw(q):
+    # q is the quaternion [w, x, y, z]
+    sin_yaw = 2.0 * (q.w * q.z + q.x * q.y)
+    cos_yaw = 1.0 - 2.0 * (q.y * q.y + q.z * q.z)
+    yaw = np.arctan2(sin_yaw, cos_yaw)
+    yaw_degrees = np.degrees(yaw)
+    if yaw_degrees < 0:
+        yaw_degrees += 360  # Adjust to [0, 360] degrees
+    return yaw_degrees
+
+
 def process_dataset(input_path, output_path, new_sampling_rate=30, skip_front=60, skip_end=60):
     # Load pose data
     pose_file_path = os.path.join(input_path, 'pose.txt')
@@ -179,7 +190,8 @@ def process_dataset(input_path, output_path, new_sampling_rate=30, skip_front=60
     acce_glob = quaternion.as_float_array(ori * acce_q * ori.conj())[:, 1:]
 
    # 计算航向角（指南针的角度）
-    heading_degrees = calculate_heading(sensor_data)
+    # heading_degrees = calculate_heading(sensor_data)
+    yaw_degrees = np.array([quaternion_to_yaw(q) for q in ori])
 
     # Construct DataFrame
     data_dict = {
@@ -196,7 +208,7 @@ def process_dataset(input_path, output_path, new_sampling_rate=30, skip_front=60
         'ori_w': new_orientation[:, 0], 'ori_x': new_orientation[:, 1], 'ori_y': new_orientation[:, 2], 'ori_z': new_orientation[:, 3],
         # 'ori_glob_w': ori[:, 0].w, 'ori_glob_x': ori[:, 0].x, 'ori_glob_y': ori[:, 0].y, 'ori_glob_z': ori[:, 0].z,
         'rv_w': output_orientation[:, 0], 'rv_x': output_orientation[:, 1], 'rv_y': output_orientation[:, 2], 'rv_z': output_orientation[:, 3],
-        'yaw_degrees': heading_degrees 
+        'yaw_degrees': yaw_degrees 
     }
 
     df = pd.DataFrame(data_dict)

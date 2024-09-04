@@ -1,18 +1,24 @@
 import os
 import pandas as pd
 import numpy as np
-from math import sqrt, atan2, degrees
+from math import sqrt
 from datetime import datetime
 
 def calculate_horizontal_distance(pos1, pos2):
     """计算两个点之间的水平面距离（忽略z轴）"""
     return sqrt((pos2[0] - pos1[0]) ** 2 + (pos2[1] - pos1[1]) ** 2)
 
-def calculate_horizontal_angle(pos1, pos2):
-    """计算两个点之间的水平面角度变化（单位：度）"""
-    delta_x = pos2[0] - pos1[0]
-    delta_y = pos2[1] - pos1[1]
-    return degrees(atan2(delta_y, delta_x))
+def calculate_3d_distance(pos1, pos2):
+    """计算两个点之间的三维空间距离"""
+    return sqrt((pos2[0] - pos1[0]) ** 2 + (pos2[1] - pos1[1]) ** 2 + (pos2[2] - pos1[2]) ** 2)
+
+def calculate_horizontal_speed(distance, time_diff):
+    """计算水平速度，不考虑z轴"""
+    return distance / time_diff if time_diff > 0 else 0
+
+def calculate_3d_speed(distance, time_diff):
+    """计算三维速度，考虑z轴"""
+    return distance / time_diff if time_diff > 0 else 0
 
 def format_timestamp(ms):
     """将时间戳（毫秒）转换为 yyyy-mm-dd HH:mm:ss 格式"""
@@ -26,10 +32,8 @@ def process_csv(file_path):
     results = []
 
     total_horizontal_distance = 0.0
+    total_3d_distance = 0.0
     total_time = 0.0
-    last_angle = None
-    start_time_overall = df['timestamp'].iloc[0]
-    end_time_overall = df['timestamp'].iloc[-1]
 
     # 按照1秒时间窗口进行计算
     start_index = 0
@@ -43,43 +47,41 @@ def process_csv(file_path):
             start_index += len(window_df)
             continue
 
-        # 计算窗口内的总距离
-        distances = []
-        for i in range(1, len(window_df)):
-            pos1 = window_df.iloc[i-1][['pos_x', 'pos_y']].values
-            pos2 = window_df.iloc[i][['pos_x', 'pos_y']].values
-            distances.append(calculate_horizontal_distance(pos1, pos2))
+        # 计算加速度的和与平均值
+        acce_x_avg = window_df['acce_glob_x'].mean()
+        acce_y_avg = window_df['acce_glob_y'].mean()
+        acce_z_avg = window_df['acce_glob_z'].mean()
 
-        horizontal_distance = sum(distances)
+        # 计算水平位移（忽略z轴）和三维位移
+        pos1 = window_df.iloc[0][['pos_x', 'pos_y', 'pos_z']].values
+        pos2 = window_df.iloc[-1][['pos_x', 'pos_y', 'pos_z']].values
+
+        horizontal_distance = calculate_horizontal_distance(pos1, pos2)
         total_horizontal_distance += horizontal_distance
 
-        # 计算平均速度
+        distance_3d = calculate_3d_distance(pos1, pos2)
+        total_3d_distance += distance_3d
+
+        # 计算时间差并计算速度
         time_diff = (window_df['timestamp'].iloc[-1] - window_df['timestamp'].iloc[0]) / 1000.0  # 秒
-        horizontal_speed = horizontal_distance / time_diff if time_diff > 0 else 0.0
+        horizontal_speed = calculate_horizontal_speed(horizontal_distance, time_diff)
+        speed_3d = calculate_3d_speed(distance_3d, time_diff)
+
         total_time += time_diff * 1000  # 转换为毫秒
 
-        # 计算水平角度变化
-        current_angle = calculate_horizontal_angle(window_df.iloc[0][['pos_x', 'pos_y']].values, 
-                                                   window_df.iloc[-1][['pos_x', 'pos_y']].values)
-        if last_angle is not None:
-            angle_change = abs(current_angle - last_angle)
-        else:
-            angle_change = 0.0
-        last_angle = current_angle
+        # 获取方向角（yaw_degrees），使用时间窗口结束点的yaw
+        yaw = window_df.iloc[-1]['yaw_degrees']
 
-        # 保存结果：窗口起始时间，结束时间，起始位置，结束位置，水平速度，水平距离，角度变化
+        # 保存结果：时间窗口起始时间、加速度的平均值、位置坐标、水平速度、3D速度、水平位移、3D位移、方向角
         results.append({
-            'start_timestamp': start_time,
-            'end_timestamp': window_df['timestamp'].iloc[-1],
-            'start_pos_x': window_df.iloc[0]['pos_x'],
-            'start_pos_y': window_df.iloc[0]['pos_y'],
-            'end_pos_x': window_df.iloc[-1]['pos_x'],
-            'end_pos_y': window_df.iloc[-1]['pos_y'],
-            'start_datetime': format_timestamp(start_time),
-            'end_datetime': format_timestamp(window_df['timestamp'].iloc[-1]),
-            'horizontal_speed': horizontal_speed,
-            'horizontal_distance': horizontal_distance,
-            'horizontal_angle_change': angle_change
+            '时间': format_timestamp(start_time),  # 时间戳格式化为 %Y-%m-%d %H:%M:%S
+            'acce_x_avg': acce_x_avg, 'acce_y_avg': acce_y_avg, 'acce_z_avg': acce_z_avg,
+            'pos_x': pos2[0], 'pos_y': pos2[1], 'pos_z': pos2[2],
+            '平面速度': horizontal_speed,
+            '3d速度': speed_3d,
+            '平面位移': horizontal_distance,
+            '3d位移': distance_3d,
+            '角度': yaw
         })
 
         # 移动到下一个时间窗口
@@ -127,7 +129,7 @@ def process_directory(input_dir, output_dir):
     print(f"Summary saved to {summary_csv_path}")
 
 if __name__ == '__main__':
-    input_directory = os.getcwd()+"/csv"  # 输入目录路径
+    input_directory = os.getcwd() + "/csv"  # 输入目录路径
     output_directory = os.path.join(os.getcwd(), "processed")  # 输出目录路径
 
     process_directory(input_directory, output_directory)
