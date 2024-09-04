@@ -29,9 +29,19 @@ def interpolate_quaternion_linear(quat_data, input_timestamp, output_timestamp):
                 break
         q1 = quaternion.quaternion(*quat_data[ptr1])
         q2 = quaternion.quaternion(*quat_data[ptr2])
-        quat_inter[i] = quaternion.as_float_array(quaternion.quaternion_time_series.slerp(q1, q2, input_timestamp[ptr1],
-                                                                                          input_timestamp[ptr2],
-                                                                                          output_timestamp[i]))
+        interpolated_quat = quaternion.quaternion_time_series.slerp(q1, q2, input_timestamp[ptr1],
+                                                                     input_timestamp[ptr2],
+                                                                     output_timestamp[i])
+        quat_inter[i] = quaternion.as_float_array(interpolated_quat)
+
+        # 检查插值结果是否包含 NaN
+        if np.isnan(quat_inter[i]).any():
+            print(f"Warning: NaN detected in interpolated quaternion at index {i}")
+            if i > 0:
+                quat_inter[i] = quat_inter[i - 1]  # 使用前一个有效值进行填充
+            else:
+                quat_inter[i] = np.array([0, 0, 0, 0])  # 使用单位四元数进行填充
+
     return quat_inter
 
 
@@ -67,12 +77,37 @@ def process_pose_data(pose_data, new_sampling_rate, skip_front, skip_end):
     new_timestamps = np.linspace(timestamps[0], timestamps[-1], new_length)
     
     new_position = interpolate_3dvector_linear(position, timestamps, new_timestamps)
+
+        # 检查输入数据是否包含 NaN
+    print("pose_data contains NaN:", np.isnan(pose_data).any())
+    print("timestamps contains NaN:", np.isnan(timestamps).any())
+    print("new_timestamps contains NaN:", np.isnan(new_timestamps).any())
+
+
     new_orientation = interpolate_quaternion_linear(pose_data[:, -4:], timestamps, new_timestamps)
 
     return new_timestamps, new_position, new_orientation
 
 def process_sensor_data(data, timestamps, new_timestamps):
     return interpolate_3dvector_linear(data[:, 1:], data[:, 0], new_timestamps)
+
+def calculate_heading(sensor_data):
+
+    """
+    通过磁力计数据计算航向角度（指南针的角度），范围为0到360度
+     'magnet_x': sensor_data['magnet'][:, 0], 'magnet_y': sensor_data['magnet'][:, 1], 'magnet_z': sensor_data['magnet'][:, 2],
+    """
+    magnet_x = sensor_data['magnet'][:, 0]
+    magnet_y =  sensor_data['magnet'][:, 1]
+
+    # 使用 atan2 计算航向角度，结果为弧度
+    heading_radians = np.arctan2(magnet_y, magnet_x)
+
+    # 将航向角度从弧度转换为度，并确保角度在 0 到 360 度之间
+    heading_degrees = np.degrees(heading_radians)
+    heading_degrees = (heading_degrees + 360) % 360
+
+    return heading_degrees
 
 def process_dataset(input_path, output_path, new_sampling_rate=30, skip_front=60, skip_end=60):
     # Load pose data
@@ -127,18 +162,41 @@ def process_dataset(input_path, output_path, new_sampling_rate=30, skip_front=60
         orientation_data[:, [1, 2, 3, 4]] = orientation_data[:, [4, 1, 2, 3]]
         output_orientation = interpolate_quaternion_linear(orientation_data[:, 1:], orientation_data[:, 0], new_timestamps)
 
+    # Convert orientation to quaternion and process global gyro and acce
+    init_tango_ori = quaternion.quaternion(*new_orientation[1])
+    game_rv = quaternion.from_float_array(output_orientation)
+
+    # Initialize rotor
+    init_rotor = init_tango_ori * game_rv[0].conj()
+    ori = init_rotor * game_rv  # Final global orientation
+
+    # Global Gyroscope and Accelerometer data
+    nz = np.zeros(new_timestamps.shape)
+    # gyro_q = quaternion.from_float_array(np.concatenate([nz[:, None], sensor_data['gyro']], axis=1))
+    acce_q = quaternion.from_float_array(np.concatenate([nz[:, None], sensor_data['acce']], axis=1))
+
+    # gyro_glob = quaternion.as_float_array(ori * gyro_q * ori.conj())[:, 1:]
+    acce_glob = quaternion.as_float_array(ori * acce_q * ori.conj())[:, 1:]
+
+   # 计算航向角（指南针的角度）
+    heading_degrees = calculate_heading(sensor_data)
+
     # Construct DataFrame
     data_dict = {
-        'time': new_timestamps,
+        'timestamp': new_timestamps,
         'datetime': [datetime.fromtimestamp(ts / 1000, tz=timezone.utc).strftime('%Y-%m-%d %H:%M:%S') for ts in new_timestamps],
         'gyro_x': sensor_data['gyro'][:, 0], 'gyro_y': sensor_data['gyro'][:, 1], 'gyro_z': sensor_data['gyro'][:, 2],
+        # 'gyro_glob_x': gyro_glob[:, 0], 'gyro_glob_y': gyro_glob[:, 1], 'gyro_glob_z': gyro_glob[:, 2],
         'acce_x': sensor_data['acce'][:, 0], 'acce_y': sensor_data['acce'][:, 1], 'acce_z': sensor_data['acce'][:, 2],
+        'acce_glob_x': acce_glob[:, 0], 'acce_glob_y': acce_glob[:, 1], 'acce_glob_z': acce_glob[:, 2],
         'linacce_x': sensor_data['linacce'][:, 0], 'linacce_y': sensor_data['linacce'][:, 1], 'linacce_z': sensor_data['linacce'][:, 2],
         'grav_x': sensor_data['gravity'][:, 0], 'grav_y': sensor_data['gravity'][:, 1], 'grav_z': sensor_data['gravity'][:, 2],
         'magnet_x': sensor_data['magnet'][:, 0], 'magnet_y': sensor_data['magnet'][:, 1], 'magnet_z': sensor_data['magnet'][:, 2],
         'pos_x': new_position[:, 0], 'pos_y': new_position[:, 1], 'pos_z': new_position[:, 2],
         'ori_w': new_orientation[:, 0], 'ori_x': new_orientation[:, 1], 'ori_y': new_orientation[:, 2], 'ori_z': new_orientation[:, 3],
-        'rv_w': output_orientation[:, 0], 'rv_x': output_orientation[:, 1], 'rv_y': output_orientation[:, 2], 'rv_z': output_orientation[:, 3]
+        # 'ori_glob_w': ori[:, 0].w, 'ori_glob_x': ori[:, 0].x, 'ori_glob_y': ori[:, 0].y, 'ori_glob_z': ori[:, 0].z,
+        'rv_w': output_orientation[:, 0], 'rv_x': output_orientation[:, 1], 'rv_y': output_orientation[:, 2], 'rv_z': output_orientation[:, 3],
+        'yaw_degrees': heading_degrees 
     }
 
     df = pd.DataFrame(data_dict)
@@ -150,6 +208,7 @@ def process_dataset(input_path, output_path, new_sampling_rate=30, skip_front=60
     output_file = os.path.join(output_path, f'{os.path.basename(input_path)}.csv')
     df.to_csv(output_file, index=False)
     print(f"Processed data saved to {output_file}")
+
 
 def main():
     parser = argparse.ArgumentParser(description="Process IMU and pose data")
