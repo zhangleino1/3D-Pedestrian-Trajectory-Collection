@@ -52,35 +52,54 @@ def process_csv(file_path):
         acce_y_avg = window_df['acce_glob_y'].mean()
         acce_z_avg = window_df['acce_glob_z'].mean()
 
-        # 计算水平位移（忽略z轴）和三维位移
-        pos1 = window_df.iloc[0][['pos_x', 'pos_y', 'pos_z']].values
-        pos2 = window_df.iloc[-1][['pos_x', 'pos_y', 'pos_z']].values
+        # 初始化局部变量
+        horizontal_distance_sum = 0.0
+        distance_3d_sum = 0.0
+        horizontal_speed_sum = 0.0
+        speed_3d_sum = 0.0
 
-        horizontal_distance = calculate_horizontal_distance(pos1, pos2)
-        total_horizontal_distance += horizontal_distance
+        # 遍历1秒时间窗口中的每两个相邻点，计算平面距离、3D距离、平面速度、3D速度
+        for i in range(len(window_df) - 1):
+            pos1 = window_df.iloc[i][['pos_x', 'pos_y', 'pos_z']].values
+            pos2 = window_df.iloc[i + 1][['pos_x', 'pos_y', 'pos_z']].values
 
-        distance_3d = calculate_3d_distance(pos1, pos2)
-        total_3d_distance += distance_3d
+            horizontal_distance = calculate_horizontal_distance(pos1, pos2)
+            distance_3d = calculate_3d_distance(pos1, pos2)
 
-        # 计算时间差并计算速度
-        time_diff = (window_df['timestamp'].iloc[-1] - window_df['timestamp'].iloc[0]) / 1000.0  # 秒
-        horizontal_speed = calculate_horizontal_speed(horizontal_distance, time_diff)
-        speed_3d = calculate_3d_speed(distance_3d, time_diff)
+            time_diff = (window_df['timestamp'].iloc[i + 1] - window_df['timestamp'].iloc[i]) / 1000.0  # 秒
 
-        total_time += time_diff * 1000  # 转换为毫秒
+            horizontal_speed = calculate_horizontal_speed(horizontal_distance, time_diff)
+            speed_3d = calculate_3d_speed(distance_3d, time_diff)
+
+            horizontal_distance_sum += horizontal_distance
+            distance_3d_sum += distance_3d
+            horizontal_speed_sum += horizontal_speed
+            speed_3d_sum += speed_3d
+
+        # 计算1秒时间窗口内的平均速度
+        avg_horizontal_speed = horizontal_speed_sum / (len(window_df) - 1)
+        avg_speed_3d = speed_3d_sum / (len(window_df) - 1)
+
+        # 累加总平面位移和总3D位移
+        total_horizontal_distance += horizontal_distance_sum
+        total_3d_distance += distance_3d_sum
+
+        # 计算时间差并累加总时间
+        time_diff_total = (window_df['timestamp'].iloc[-1] - window_df['timestamp'].iloc[0]) / 1000.0  # 秒
+        total_time += time_diff_total * 1000  # 转换为毫秒
 
         # 获取方向角（yaw_degrees），使用时间窗口结束点的yaw
         yaw = window_df.iloc[-1]['yaw_degrees']
 
-        # 保存结果：时间窗口起始时间、加速度的平均值、位置坐标、水平速度、3D速度、水平位移、3D位移、方向角
+        # 保存结果：时间窗口起始时间、加速度的平均值、位置坐标、平均水平速度、平均3D速度、总平面位移、总3D位移、方向角
         results.append({
             '时间': format_timestamp(start_time),  # 时间戳格式化为 %Y-%m-%d %H:%M:%S
             'acce_x_avg': acce_x_avg, 'acce_y_avg': acce_y_avg, 'acce_z_avg': acce_z_avg,
             'pos_x': pos2[0], 'pos_y': pos2[1], 'pos_z': pos2[2],
-            '平面速度': horizontal_speed,
-            '3d速度': speed_3d,
-            '平面位移': horizontal_distance,
-            '3d位移': distance_3d,
+            '平均平面速度': avg_horizontal_speed,
+            '平均3d速度': avg_speed_3d,
+            '总平面位移': horizontal_distance_sum,
+            '总3d位移': distance_3d_sum,
             '角度': yaw
         })
 
