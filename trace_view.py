@@ -85,5 +85,9 @@ for file in file_list:
     # 调整子图之间的布局
     plt.tight_layout()
 
+    # 调整子图布局参数，按照图片中的值
+    plt.subplots_adjust(left=0.099, bottom=0.095, right=0.91, top=0.91, wspace=0.318, hspace=0.315)
+
+
     # 显示图像
     plt.show(block=True)
